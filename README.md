@@ -7,7 +7,8 @@ A FastAPI-based service for extracting prescription details from medical documen
 - 📄 **Multi-format Support**: Upload PDFs, JPG, JPEG, or PNG prescription images
 - 🤖 **AI-Powered OCR**: Uses Google Gemini 3 Pro for intelligent text extraction
 - 📊 **Structured Data**: Extracts doctor info, patient details, and medicine information
-- 🔍 **Medicine Verification**: Leverages Google Search for medicine validation
+- 👨‍⚕️ **Doctor Verification**: Validates doctor credentials against National Medical Council (NMC) registry
+- 🔍 **Intelligent Name Matching**: Uses fuzzy matching to verify doctor names
 - ⚡ **Fast & Scalable**: Built with FastAPI for high performance
 
 ## Extracted Information
@@ -119,6 +120,51 @@ Check if the service is running.
 }
 ```
 
+### 3. Verify Doctor
+**POST** `/api/v1/verify-doctor`
+
+Verify a doctor's credentials against the National Medical Council (NMC) registry.
+
+**Request**:
+```json
+{
+  "doctor_name": "Dr. JOSEPH.C.MATHURAM",
+  "registration_number": "28564",
+  "medical_council": null
+}
+```
+
+**Response**:
+```json
+{
+  "verified": true,
+  "reason": "Doctor verified with 85.2% name match",
+  "total_matches": 16,
+  "best_match": {
+    "serial_no": 3,
+    "registration_year": 1977,
+    "registration_number": "28564",
+    "medical_council": "Tamil Nadu Medical Council",
+    "doctor_name": "Mathuram Kjoseph Chinnadurai",
+    "father_or_spouse_name": "B K Mathuram",
+    "doctor_id": "130143",
+    "name_similarity": 0.852
+  },
+  "matches": [
+    {
+      "serial_no": 3,
+      "registration_year": 1977,
+      "registration_number": "28564",
+      "medical_council": "Tamil Nadu Medical Council",
+      "doctor_name": "Mathuram Kjoseph Chinnadurai",
+      "father_or_spouse_name": "B K Mathuram",
+      "doctor_id": "130143",
+      "name_similarity": 0.852
+    }
+  ]
+}
+```
+
 ## Usage Examples
 
 ### Using cURL
@@ -152,6 +198,47 @@ fetch('http://localhost:8000/api/v1/upload-prescription', {
 .then(data => console.log(data));
 ```
 
+### Doctor Verification Examples
+
+#### Using cURL
+```bash
+curl -X POST "http://localhost:8000/api/v1/verify-doctor" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "doctor_name": "Dr. JOSEPH.C.MATHURAM",
+    "registration_number": "28564"
+  }'
+```
+
+#### Using Python
+```python
+import requests
+
+url = "http://localhost:8000/api/v1/verify-doctor"
+data = {
+    "doctor_name": "Dr. JOSEPH.C.MATHURAM",
+    "registration_number": "28564"
+}
+response = requests.post(url, json=data)
+result = response.json()
+
+if result['verified']:
+    print(f"✓ Doctor verified: {result['best_match']['doctor_name']}")
+    print(f"  Medical Council: {result['best_match']['medical_council']}")
+    print(f"  Match confidence: {result['best_match']['name_similarity']*100:.1f}%")
+else:
+    print(f"✗ Verification failed: {result['reason']}")
+```
+
+#### Test Script
+```bash
+# Test doctor verification
+python test_doctor_verification.py
+
+# Run multiple test cases
+python test_doctor_verification.py --multiple
+```
+
 ## Project Structure
 
 ```
@@ -160,17 +247,20 @@ fetch('http://localhost:8000/api/v1/upload-prescription', {
 │   ├── __init__.py
 │   ├── api/
 │   │   ├── __init__.py
-│   │   └── routes.py          # API endpoints
+│   │   └── routes.py                      # API endpoints
 │   ├── models/
 │   │   ├── __init__.py
-│   │   └── schemas.py         # Pydantic models
+│   │   └── schemas.py                     # Pydantic models
 │   └── services/
 │       ├── __init__.py
-│       └── gemini_service.py  # Gemini OCR service
-├── main.py                     # FastAPI app entry point
-├── requirements.txt            # Python dependencies
-├── .env                        # Environment variables
-└── README.md                   # This file
+│       ├── gemini_service.py              # Gemini OCR service
+│       └── doctor_verification_service.py # NMC doctor verification
+├── main.py                                 # FastAPI app entry point
+├── requirements.txt                        # Python dependencies
+├── test_api.py                            # OCR API test script
+├── test_doctor_verification.py            # Doctor verification test script
+├── .env                                   # Environment variables
+└── README.md                              # This file
 ```
 
 ## Error Handling

@@ -1,7 +1,11 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
-from app.models.schemas import OCRResponse, PrescriptionData, DoctorInfo, PatientInfo, Medicine
+from app.models.schemas import (
+    OCRResponse, PrescriptionData, DoctorInfo, PatientInfo, Medicine,
+    DoctorVerificationResponse, VerifyDoctorRequest, NMCDoctorRecord
+)
 from app.services.gemini_service import GeminiOCRService
+from app.services.doctor_verification_service import DoctorVerificationService
 import logging
 
 # Configure logging
@@ -10,8 +14,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["prescription"])
 
-# Initialize Gemini service
+# Initialize services
 gemini_service = GeminiOCRService()
+doctor_verification_service = DoctorVerificationService(similarity_threshold=0.2)
 
 
 @router.post("/upload-prescription", response_model=OCRResponse)
@@ -117,6 +122,55 @@ async def upload_prescription(file: UploadFile = File(...)):
         raise HTTPException(
             status_code=500,
             detail=f"Internal server error: {str(e)}"
+        )
+
+
+
+
+@router.post("/verify-doctor", response_model=DoctorVerificationResponse)
+async def verify_doctor(request: VerifyDoctorRequest):
+    """
+    Verify a doctor's credentials against the National Medical Council (NMC) registry.
+    
+    Args:
+        request: Doctor verification request with name and registration number
+    
+    Returns:
+        DoctorVerificationResponse with verification status and matching records
+    """
+    try:
+        logger.info(f"Verifying doctor: {request.doctor_name}, Reg No: {request.registration_number}")
+        
+        # Verify doctor using the verification service
+        verification_result = doctor_verification_service.verify_doctor(
+            doctor_name=request.doctor_name,
+            registration_no=request.registration_number,
+            medical_council=request.medical_council
+        )
+        
+        # Convert to response model
+        matches = [NMCDoctorRecord(**match) for match in verification_result["matches"]]
+        best_match = None
+        if verification_result["best_match"]:
+            best_match = NMCDoctorRecord(**verification_result["best_match"])
+        
+        response = DoctorVerificationResponse(
+            verified=verification_result["verified"],
+            reason=verification_result["reason"],
+            matches=matches,
+            best_match=best_match,
+            total_matches=verification_result["total_matches"]
+        )
+        
+        logger.info(f"Verification result: {response.verified}, Matches: {response.total_matches}")
+        
+        return response
+    
+    except Exception as e:
+        logger.error(f"Error verifying doctor: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error verifying doctor: {str(e)}"
         )
 
 

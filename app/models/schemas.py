@@ -46,3 +46,31 @@ class HealthCheckResponse(BaseModel):
     """Health check response."""
     status: str = Field(..., description="Service status")
     message: str = Field(..., description="Status message")
+
+
+class NMCDoctorRecord(BaseModel):
+    """Doctor record from NMC registry."""
+    serial_no: int = Field(..., description="Serial number in search results")
+    registration_year: int = Field(..., description="Year of registration")
+    registration_number: str = Field(..., description="Registration number")
+    medical_council: str = Field(..., description="Name of medical council")
+    doctor_name: str = Field(..., description="Doctor's name from NMC")
+    father_or_spouse_name: Optional[str] = Field(None, description="Father or spouse name")
+    doctor_id: Optional[str] = Field(None, description="NMC doctor ID")
+    name_similarity: Optional[float] = Field(None, description="Name similarity score (0-1)")
+
+
+class DoctorVerificationResponse(BaseModel):
+    """Response for doctor verification API."""
+    verified: bool = Field(..., description="Whether the doctor is verified")
+    reason: str = Field(..., description="Reason for verification result")
+    matches: List[NMCDoctorRecord] = Field(default_factory=list, description="All matching doctors from NMC")
+    best_match: Optional[NMCDoctorRecord] = Field(None, description="Best matching doctor record")
+    total_matches: int = Field(0, description="Total number of matches found")
+
+
+class VerifyDoctorRequest(BaseModel):
+    """Request model for doctor verification."""
+    doctor_name: str = Field(..., description="Doctor's name from prescription")
+    registration_number: str = Field(..., description="Doctor's registration number")
+    medical_council: Optional[str] = Field(None, description="Medical council name (optional)")
