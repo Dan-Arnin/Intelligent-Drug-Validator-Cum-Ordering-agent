@@ -2,11 +2,16 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from app.models.schemas import (
     OCRResponse, PrescriptionData, DoctorInfo, PatientInfo, Medicine,
-    DoctorVerificationResponse, VerifyDoctorRequest, NMCDoctorRecord
+    DoctorVerificationResponse, VerifyDoctorRequest, NMCDoctorRecord,
+    MedicineSafetyRequest, MedicineSafetyResponse, MedicineFlagResult,
+    MedicalChatRequest, MedicalChatResponse, ChatMessage, MedicalInformation
 )
 from app.services.gemini_service import GeminiOCRService
 from app.services.doctor_verification_service import DoctorVerificationService
+from app.services.medicine_safety_service import MedicineSafetyService
+from app.services.medical_chat_service import MedicalChatService
 import logging
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -17,6 +22,9 @@ router = APIRouter(prefix="/api/v1", tags=["prescription"])
 # Initialize services
 gemini_service = GeminiOCRService()
 doctor_verification_service = DoctorVerificationService(similarity_threshold=0.2)
+medicine_safety_service = MedicineSafetyService()
+medical_chat_service = MedicalChatService()
+
 
 
 @router.post("/upload-prescription", response_model=OCRResponse)
@@ -181,3 +189,117 @@ async def health_check():
         "status": "healthy",
         "message": "Medicine Verification Service is running"
     }
+
+
+@router.post("/check-medicine-safety", response_model=MedicineSafetyResponse)
+async def check_medicine_safety(request: MedicineSafetyRequest):
+    """
+    Check if medicines are safe (not banned, restricted, or withdrawn in India).
+    
+    Args:
+        request: List of medicine names to check
+    
+    Returns:
+        MedicineSafetyResponse with safety status for each medicine
+    """
+    try:
+        logger.info(f"Checking safety for {len(request.medicines)} medicines")
+        
+        if not request.medicines:
+            return MedicineSafetyResponse(
+                success=False,
+                results=None,
+                error="No medicines provided"
+            )
+        
+        # Check medicines using the safety service
+        results = medicine_safety_service.check_medicines(request.medicines)
+        
+        # Convert to response model
+        flag_results = [MedicineFlagResult(**result) for result in results]
+        
+        logger.info(f"Safety check complete. Flagged: {sum(1 for r in flag_results if r.flagged)}/{len(flag_results)}")
+        
+        return MedicineSafetyResponse(
+            success=True,
+            results=flag_results,
+            error=None
+        )
+    
+    except Exception as e:
+        logger.error(f"Error checking medicine safety: {str(e)}", exc_info=True)
+        return MedicineSafetyResponse(
+            success=False,
+            results=None,
+            error=f"Error checking medicine safety: {str(e)}"
+        )
+
+
+@router.post("/medical-chat", response_model=MedicalChatResponse)
+async def medical_chat(request: MedicalChatRequest):
+    """
+    Chat with AI assistant to collect medical symptoms and medication information.
+    
+    This endpoint follows a structured conversation flow to:
+    1. Collect disease/illness and symptoms
+    2. Collect prescribed medicines
+    3. Confirm the medicine list
+    
+    Args:
+        request: User message, conversation history, and collected medical information
+    
+    Returns:
+        MedicalChatResponse with AI response and updated medical information
+    """
+    try:
+        logger.info(f"Processing medical chat message: {request.message[:50]}...")
+        
+        # Convert conversation history to dict format
+        conversation_history = [
+            {"role": msg.role, "content": msg.content} 
+            for msg in request.conversation_history
+        ]
+        
+        # Convert medical information to dict if present
+        medical_info = None
+        if request.medical_information:
+            medical_info = request.medical_information.model_dump()
+        
+        # Convert prescription data to dict if present
+        prescription_data = None
+        if request.prescription_data:
+            prescription_data = request.prescription_data.model_dump()
+        
+        # Process the chat
+        result = medical_chat_service.chat(
+            user_message=request.message,
+            conversation_history=conversation_history,
+            medical_information=medical_info,
+            prescription_data=prescription_data
+        )
+        
+        # Convert updated medical information back to model
+        updated_medical_info = None
+        if result.get("updated_medical_information"):
+            updated_medical_info = MedicalInformation(**result["updated_medical_information"])
+        
+        logger.info(f"Chat response generated. Complete: {result.get('conversation_complete', False)}")
+        
+        return MedicalChatResponse(
+            success=True,
+            response=result.get("response"),
+            updated_medical_information=updated_medical_info,
+            conversation_complete=result.get("conversation_complete", False),
+            error=None
+        )
+    
+    except Exception as e:
+        logger.error(f"Error in medical chat: {str(e)}", exc_info=True)
+        return MedicalChatResponse(
+            success=False,
+            response=None,
+            updated_medical_information=None,
+            conversation_complete=False,
+            error=f"Error in medical chat: {str(e)}"
+        )
+

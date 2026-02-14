@@ -74,3 +74,53 @@ class VerifyDoctorRequest(BaseModel):
     doctor_name: str = Field(..., description="Doctor's name from prescription")
     registration_number: str = Field(..., description="Doctor's registration number")
     medical_council: Optional[str] = Field(None, description="Medical council name (optional)")
+
+
+# Medicine Safety Check Schemas
+class MedicineFlagResult(BaseModel):
+    """Result for individual medicine safety check."""
+    medicine_name: str = Field(..., description="Name of the medicine")
+    flagged: bool = Field(..., description="True if medicine is banned/restricted/withdrawn")
+
+
+class MedicineSafetyRequest(BaseModel):
+    """Request model for medicine safety check."""
+    medicines: List[str] = Field(..., description="List of medicine names to check")
+
+
+class MedicineSafetyResponse(BaseModel):
+    """Response model for medicine safety check."""
+    success: bool = Field(..., description="Whether the check was successful")
+    results: Optional[List[MedicineFlagResult]] = Field(None, description="Safety check results for each medicine")
+    error: Optional[str] = Field(None, description="Error message if check failed")
+
+
+# Medical Chat Schemas
+class ChatMessage(BaseModel):
+    """Individual chat message."""
+    role: str = Field(..., description="Role: 'user' or 'assistant'")
+    content: str = Field(..., description="Message content")
+
+
+class MedicalInformation(BaseModel):
+    """Medical information collected during conversation."""
+    reported_disease: Optional[str] = Field(None, description="Disease/illness reported by user")
+    medications_provided_by_user: Optional[List[str]] = Field(None, description="Medications listed by user")
+    medication_confirmation: Optional[bool] = Field(None, description="Whether user confirmed medications")
+
+
+class MedicalChatRequest(BaseModel):
+    """Request model for medical chat."""
+    message: str = Field(..., description="User's message")
+    conversation_history: List[ChatMessage] = Field(default_factory=list, description="Previous conversation messages")
+    medical_information: Optional[MedicalInformation] = Field(None, description="Collected medical information")
+    prescription_data: Optional[PrescriptionData] = Field(None, description="Prescription data from OCR (if available)")
+
+
+class MedicalChatResponse(BaseModel):
+    """Response model for medical chat."""
+    success: bool = Field(..., description="Whether the chat was successful")
+    response: Optional[str] = Field(None, description="AI assistant's response")
+    updated_medical_information: Optional[MedicalInformation] = Field(None, description="Updated medical information")
+    conversation_complete: bool = Field(False, description="Whether the conversation flow is complete")
+    error: Optional[str] = Field(None, description="Error message if chat failed")

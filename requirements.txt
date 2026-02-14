@@ -6,3 +6,5 @@ python-dotenv
 Pillow
 PyPDF2
 pdf2image
+requests
+
