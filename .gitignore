@@ -52,3 +52,5 @@ htmlcov/
 # Uploads (if you want to ignore uploaded files)
 uploads/
 temp/
+
+cerebral/
