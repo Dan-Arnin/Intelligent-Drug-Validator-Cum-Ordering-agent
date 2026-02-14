@@ -2,6 +2,10 @@ import os
 import json
 import logging
 import re
+import base64
+import tempfile
+import wave
+import io
 from typing import List, Dict, Any, Optional, Tuple
 from google import genai
 from google.genai import types
@@ -102,7 +106,7 @@ Always include these JSON extractions in your response along with your conversat
 class MedicalChatService:
     """Service for handling medical intake conversations using Google Gemini."""
     
-    def __init__(self, model_name: str = "gemini-2.0-flash"):
+    def __init__(self, model_name: str = "gemini-3-flash-preview"):
         """
         Initialize the medical chat service.
         
@@ -164,6 +168,110 @@ class MedicalChatService:
         
         return "\n".join(context_parts)
     
+    def _transcribe_audio(self, audio_base64: str) -> str:
+        """
+        Transcribe audio to text using Gemini.
+        
+        Args:
+            audio_base64: Base64 encoded audio data
+            
+        Returns:
+            Transcribed text
+        """
+        try:
+            # Decode base64 audio
+            audio_data = base64.b64decode(audio_base64)
+            
+            # Save to temporary file
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_audio:
+                temp_audio.write(audio_data)
+                temp_audio_path = temp_audio.name
+            
+            try:
+                # Upload audio file to Gemini
+                logger.info("Uploading audio file to Gemini for transcription")
+                myfile = self.client.files.upload(file=temp_audio_path)
+                
+                # Transcribe using Gemini
+                response = self.client.models.generate_content(
+                    model="gemini-3-flash-preview",
+                    contents=["Transcribe this audio clip. Only return the transcribed text, nothing else.", myfile]
+                )
+                
+                transcribed_text = response.text.strip()
+                logger.info(f"Audio transcribed: {transcribed_text[:50]}...")
+                
+                return transcribed_text
+            
+            finally:
+                # Clean up temporary file
+                if os.path.exists(temp_audio_path):
+                    os.unlink(temp_audio_path)
+        
+        except Exception as e:
+            logger.error(f"Audio transcription failed: {str(e)}")
+            raise Exception(f"Failed to transcribe audio: {str(e)}")
+    
+    def _generate_audio_response(self, text: str) -> str:
+        """
+        Generate audio response from text using Gemini TTS.
+        
+        Args:
+            text: Text to convert to speech
+            
+        Returns:
+            Base64 encoded audio data
+        """
+        try:
+            logger.info("Generating audio response using Gemini TTS")
+            
+            # Using the new TTS model which returns raw PCM
+            response = self.client.models.generate_content(
+                model="gemini-2.5-flash-preview-tts",
+                contents=text,
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name='Kore',
+                            )
+                        )
+                    ),
+                )
+            )
+            
+            # Extract raw PCM audio data
+            # Check safely for response structure
+            if not response.candidates or not response.candidates[0].content.parts:
+                raise Exception("No audio content in response")
+                
+            pcm_data = response.candidates[0].content.parts[0].inline_data.data
+            
+            # Create a WAV file in memory from the raw PCM data
+            # Gemini TTS typically returns: Mono (1 channel), 24000 Hz, 16-bit (2 bytes)
+            with io.BytesIO() as wav_buffer:
+                with wave.open(wav_buffer, "wb") as wf:
+                    wf.setnchannels(1)        # Mono
+                    wf.setsampwidth(2)        # 16-bit
+                    wf.setframerate(24000)    # 24kHz
+                    wf.writeframes(pcm_data)
+                
+                # Get the WAV file bytes
+                wav_data = wav_buffer.getvalue()
+                
+                # Encode to base64
+                audio_base64 = base64.b64encode(wav_data).decode('utf-8')
+            
+            logger.info(f"Audio response generated successfully ({len(audio_base64)} chars)")
+            return audio_base64
+        
+        except Exception as e:
+            logger.error(f"Audio generation failed: {str(e)}")
+            # We don't want to crash the whole chat if audio fails, 
+            # so we log deeply but raise to let the caller handle it (which catches and logs warning)
+            raise Exception(f"Failed to generate audio response: {str(e)}")
+    
     def _extract_information_from_response(self, response_text: str) -> Tuple[str, Dict[str, Any]]:
         """
         Extract structured information from AI response.
@@ -177,9 +285,13 @@ class MedicalChatService:
         extracted_data = {}
         clean_response = response_text
         
+        # Remove markdown code blocks (```json ... ```)
+        clean_response = re.sub(r'```json\s*', '', clean_response)
+        clean_response = re.sub(r'```\s*', '', clean_response)
+        
         # Try to find JSON patterns in the response
         json_pattern = r'\{[^}]+\}'
-        matches = re.findall(json_pattern, response_text)
+        matches = re.findall(json_pattern, clean_response)
         
         for match in matches:
             try:
@@ -190,28 +302,46 @@ class MedicalChatService:
             except json.JSONDecodeError:
                 continue
         
+        # Clean up extra whitespace and newlines
+        clean_response = re.sub(r'\n\s*\n', '\n', clean_response)  # Remove multiple blank lines
+        clean_response = clean_response.strip()
+        
         return clean_response, extracted_data
     
     def chat(
         self,
-        user_message: str,
-        conversation_history: List[Dict[str, str]],
+        user_message: Optional[str] = None,
+        audio_base64: Optional[str] = None,
+        conversation_history: List[Dict[str, str]] = None,
         medical_information: Optional[Dict[str, Any]] = None,
-        prescription_data: Optional[Dict[str, Any]] = None
+        prescription_data: Optional[Dict[str, Any]] = None,
+        return_audio: bool = True
     ) -> Dict[str, Any]:
         """
         Process a user message and generate a response.
         
         Args:
-            user_message: The user's message
+            user_message: The user's message (text)
+            audio_base64: The user's message (audio as base64)
             conversation_history: Previous conversation messages
             medical_information: Collected medical information
             prescription_data: Prescription data from OCR if available
+            return_audio: Whether to generate audio response
             
         Returns:
-            Dictionary with response, updated medical information, and completion status
+            Dictionary with response, audio_response_base64, updated medical information, and completion status
         """
         try:
+            # Handle audio input if provided
+            if audio_base64 and not user_message:
+                logger.info("Transcribing audio input")
+                user_message = self._transcribe_audio(audio_base64)
+            
+            if not user_message:
+                raise ValueError("Either message or audio_base64 must be provided")
+            
+            if conversation_history is None:
+                conversation_history = []
             # Build context
             context = self._build_conversation_context(
                 conversation_history, 
@@ -275,8 +405,19 @@ class MedicalChatService:
             
             logger.info(f"Chat response generated. Complete: {conversation_complete}")
             
+            # Generate audio response if requested
+            audio_response_base64 = None
+            if return_audio:
+                try:
+                    response_for_audio = clean_response if clean_response else response_text
+                    audio_response_base64 = self._generate_audio_response(response_for_audio)
+                except Exception as e:
+                    logger.warning(f"Failed to generate audio response: {str(e)}")
+                    # Continue without audio response
+            
             return {
                 "response": clean_response if clean_response else response_text,
+                "audio_response_base64": audio_response_base64,
                 "updated_medical_information": updated_medical_info,
                 "conversation_complete": conversation_complete
             }

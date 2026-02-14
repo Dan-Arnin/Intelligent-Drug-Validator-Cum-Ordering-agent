@@ -97,9 +97,17 @@ class MedicineSafetyResponse(BaseModel):
 
 # Medical Chat Schemas
 class ChatMessage(BaseModel):
-    """Individual chat message."""
-    role: str = Field(..., description="Role: 'user' or 'assistant'")
-    content: str = Field(..., description="Message content")
+    """Individual chat message. Accepts multiple key formats."""
+    role: Optional[str] = Field(None, description="Role: 'user' or 'assistant'")
+    content: Optional[str] = Field(None, description="Message content")
+    # Alternative key names that frontends commonly use
+    user: Optional[str] = Field(None, description="User message (alternative key)")
+    bot: Optional[str] = Field(None, description="Bot/assistant message (alternative key)")
+    sender: Optional[str] = Field(None, description="Sender role (alternative key)")
+    text: Optional[str] = Field(None, description="Message text (alternative key)")
+
+    class Config:
+        extra = "allow"  # Allow any extra fields without failing
 
 
 class MedicalInformation(BaseModel):
@@ -108,19 +116,24 @@ class MedicalInformation(BaseModel):
     medications_provided_by_user: Optional[List[str]] = Field(None, description="Medications listed by user")
     medication_confirmation: Optional[bool] = Field(None, description="Whether user confirmed medications")
 
+    class Config:
+        extra = "allow"
+
 
 class MedicalChatRequest(BaseModel):
     """Request model for medical chat."""
-    message: str = Field(..., description="User's message")
-    conversation_history: List[ChatMessage] = Field(default_factory=list, description="Previous conversation messages")
-    medical_information: Optional[MedicalInformation] = Field(None, description="Collected medical information")
-    prescription_data: Optional[PrescriptionData] = Field(None, description="Prescription data from OCR (if available)")
+    message: Optional[str] = Field(None, description="User's message (text)")
+    audio_base64: Optional[str] = Field(None, description="User's message (audio as base64)")
+    conversation_history: Optional[List] = Field(default_factory=list, description="Previous conversation messages (any format: strings, dicts, etc)")
+    medical_information: Optional[dict] = Field(None, description="Collected medical information")
+    prescription_data: Optional[dict] = Field(None, description="Prescription data from OCR (if available)")
 
 
 class MedicalChatResponse(BaseModel):
     """Response model for medical chat."""
     success: bool = Field(..., description="Whether the chat was successful")
-    response: Optional[str] = Field(None, description="AI assistant's response")
-    updated_medical_information: Optional[MedicalInformation] = Field(None, description="Updated medical information")
+    response: Optional[str] = Field(None, description="AI assistant's response (text)")
+    audio_response_base64: Optional[str] = Field(None, description="AI assistant's response (audio as base64)")
+    updated_medical_information: Optional[dict] = Field(None, description="Updated medical information")
     conversation_complete: bool = Field(False, description="Whether the conversation flow is complete")
     error: Optional[str] = Field(None, description="Error message if chat failed")

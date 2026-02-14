@@ -1,0 +1,71 @@
+{
+  "description": "Sample payloads for testing the medical chat endpoint with audio support",
+  "endpoints": {
+    "medical_chat_text_input": {
+      "url": "POST http://localhost:8000/api/v1/medical-chat",
+      "description": "Send text message, receive text + audio response",
+      "payload": {
+        "message": "Hello, I have a fever and headache for the past 2 days",
+        "conversation_history": [],
+        "medical_information": null,
+        "prescription_data": null
+      }
+    },
+    "medical_chat_with_history": {
+      "url": "POST http://localhost:8000/api/v1/medical-chat",
+      "description": "Continue conversation with history",
+      "payload": {
+        "message": "The doctor prescribed Paracetamol 500mg and Ibuprofen",
+        "conversation_history": [
+          {
+            "role": "user",
+            "content": "Hello, I have a fever and headache"
+          },
+          {
+            "role": "assistant",
+            "content": "Thank you for sharing that. Now, please list all the medicines you have been prescribed."
+          }
+        ],
+        "medical_information": {
+          "reported_disease": "fever and headache",
+          "medications_provided_by_user": null,
+          "medication_confirmation": null
+        },
+        "prescription_data": null
+      }
+    },
+    "medical_chat_audio_input": {
+      "url": "POST http://localhost:8000/api/v1/medical-chat",
+      "description": "Send audio (base64), receive text + audio response",
+      "note": "Replace 'YOUR_BASE64_AUDIO_HERE' with actual base64-encoded audio",
+      "payload": {
+        "audio_base64": "YOUR_BASE64_AUDIO_HERE",
+        "conversation_history": [],
+        "medical_information": null,
+        "prescription_data": null
+      }
+    },
+    "check_medicine_safety": {
+      "url": "POST http://localhost:8000/api/v1/check-medicine-safety",
+      "description": "Check if medicines are safe/banned in India",
+      "payload": {
+        "medicines": [
+          "Paracetamol",
+          "Alprazolam",
+          "Codeine",
+          "Ibuprofen",
+          "Phenylpropanolamine"
+        ]
+      }
+    }
+  },
+  "curl_examples": {
+    "medical_chat_text": "curl -X POST \"http://localhost:8000/api/v1/medical-chat\" -H \"Content-Type: application/json\" -d '{\"message\": \"I have a fever\", \"conversation_history\": [], \"medical_information\": null, \"prescription_data\": null}'",
+    "check_medicine_safety": "curl -X POST \"http://localhost:8000/api/v1/check-medicine-safety\" -H \"Content-Type: application/json\" -d '{\"medicines\": [\"Paracetamol\", \"Alprazolam\", \"Codeine\"]}'"
+  },
+  "python_examples": {
+    "medical_chat_text": "import requests\n\nresponse = requests.post(\n    'http://localhost:8000/api/v1/medical-chat',\n    json={\n        'message': 'I have a fever and headache',\n        'conversation_history': [],\n        'medical_information': None,\n        'prescription_data': None\n    }\n)\n\nresult = response.json()\nprint(f\"Text: {result['response']}\")\nprint(f\"Audio: {len(result['audio_response_base64'])} chars\")",
+    "medical_chat_audio": "import requests\nimport base64\n\n# Load audio file\nwith open('message.mp3', 'rb') as f:\n    audio_data = f.read()\n\naudio_base64 = base64.b64encode(audio_data).decode('utf-8')\n\nresponse = requests.post(\n    'http://localhost:8000/api/v1/medical-chat',\n    json={\n        'audio_base64': audio_base64,\n        'conversation_history': [],\n        'medical_information': None,\n        'prescription_data': None\n    }\n)\n\nresult = response.json()\nprint(f\"Transcribed: {result['response']}\")\n\n# Save audio response\naudio_response = base64.b64decode(result['audio_response_base64'])\nwith open('response.wav', 'wb') as f:\n    f.write(audio_response)",
+    "check_medicine_safety": "import requests\n\nresponse = requests.post(\n    'http://localhost:8000/api/v1/check-medicine-safety',\n    json={\n        'medicines': ['Paracetamol', 'Alprazolam', 'Codeine']\n    }\n)\n\nresult = response.json()\nfor medicine in result['results']:\n    status = '⚠️ FLAGGED' if medicine['flagged'] else '✅ SAFE'\n    print(f\"{medicine['medicine_name']}: {status}\")"
+  }
+}

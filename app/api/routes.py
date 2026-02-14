@@ -94,9 +94,40 @@ async def upload_prescription(file: UploadFile = File(...)):
             
             # Parse medicines
             medicines = []
+            # Key mapping: Gemini may return various key formats
+            medicine_key_map = {
+                "medicine name": "medicine_name",
+                "medicine_name": "medicine_name",
+                "medicinename": "medicine_name",
+                "name": "medicine_name",
+                "dosage": "dosage",
+                "dosage amount": "dosage",
+                "dosage_instruction": "dosage_instruction",
+                "dosage instruction": "dosage_instruction",
+                "dosageinstruction": "dosage_instruction",
+                "frequency": "dosage_instruction",
+                "timing": "timing",
+                "duration": "duration",
+            }
+            
             if "medicines" in extracted_data:
                 for med in extracted_data["medicines"]:
-                    medicines.append(Medicine(**med))
+                    # Normalize keys: "Medicine Name" -> "medicine_name"
+                    normalized = {}
+                    for key, value in med.items():
+                        normalized_key = medicine_key_map.get(key.lower().strip(), key.lower().replace(" ", "_"))
+                        normalized[normalized_key] = value
+                    
+                    # Ensure medicine_name exists (required field)
+                    if "medicine_name" not in normalized:
+                        # Try to find any key that looks like a name
+                        for k, v in normalized.items():
+                            if "name" in k and v:
+                                normalized["medicine_name"] = v
+                                break
+                    
+                    if "medicine_name" in normalized and normalized["medicine_name"]:
+                        medicines.append(Medicine(**{k: v for k, v in normalized.items() if k in Medicine.model_fields}))
             
             prescription_data = PrescriptionData(
                 doctor_info=doctor_info,
@@ -245,49 +276,106 @@ async def medical_chat(request: MedicalChatRequest):
     2. Collect prescribed medicines
     3. Confirm the medicine list
     
+    Supports both text and audio input/output:
+    - Send text via 'message' field
+    - Send audio via 'audio_base64' field (base64 encoded audio)
+    - Receive text response in 'response' field
+    - Receive audio response in 'audio_response_base64' field (base64 encoded WAV)
+    
     Args:
-        request: User message, conversation history, and collected medical information
+        request: User message (text or audio), conversation history, and collected medical information
     
     Returns:
-        MedicalChatResponse with AI response and updated medical information
+        MedicalChatResponse with AI response (text and audio) and updated medical information
     """
     try:
-        logger.info(f"Processing medical chat message: {request.message[:50]}...")
+        # Log request details for debugging
+        logger.info("="*60)
+        logger.info("MEDICAL CHAT REQUEST RECEIVED")
+        logger.info(f"  message: {str(request.message)[:10] if request.message else 'None'}...")
+        logger.info(f"  audio_base64: {str(request.audio_base64)[:10] if request.audio_base64 else 'None'}...")
+        logger.info(f"  conversation_history: {len(request.conversation_history)} messages")
+        logger.info(f"  medical_information: {request.medical_information}")
+        logger.info(f"  prescription_data: {'Present' if request.prescription_data else 'None'}")
+        logger.info("="*60)
         
-        # Convert conversation history to dict format
-        conversation_history = [
-            {"role": msg.role, "content": msg.content} 
-            for msg in request.conversation_history
-        ]
+        # Determine if audio or text input
+        input_type = "audio" if request.audio_base64 else "text"
+        log_message = f"audio input ({len(request.audio_base64) if request.audio_base64 else 0} bytes)" if input_type == "audio" else f"text: {request.message[:50] if request.message else 'empty'}..."
+        logger.info(f"Processing medical chat - {log_message}")
         
-        # Convert medical information to dict if present
-        medical_info = None
-        if request.medical_information:
-            medical_info = request.medical_information.model_dump()
+        # Validate input
+        if not request.message and not request.audio_base64:
+            return MedicalChatResponse(
+                success=False,
+                response=None,
+                audio_response_base64=None,
+                updated_medical_information=None,
+                conversation_complete=False,
+                error="Either 'message' or 'audio_base64' must be provided"
+            )
         
-        # Convert prescription data to dict if present
-        prescription_data = None
-        if request.prescription_data:
-            prescription_data = request.prescription_data.model_dump()
+        # Normalize conversation history from ANY format to {role, content}
+        conversation_history = []
+        for msg in (request.conversation_history or []):
+            if isinstance(msg, str):
+                # Handle string format: "User: Hi" or "Assistant: Hello..."
+                msg_lower = msg.strip()
+                if msg_lower.lower().startswith("user:"):
+                    conversation_history.append({"role": "user", "content": msg_lower[5:].strip()})
+                elif msg_lower.lower().startswith("assistant:"):
+                    conversation_history.append({"role": "assistant", "content": msg_lower[10:].strip()})
+                elif msg_lower.lower().startswith("bot:"):
+                    conversation_history.append({"role": "assistant", "content": msg_lower[4:].strip()})
+                else:
+                    # Unknown format string, treat as user message
+                    conversation_history.append({"role": "user", "content": msg_lower})
+            
+            elif isinstance(msg, dict):
+                # Handle {role: "...", content: "..."} format
+                role = msg.get("role") or msg.get("sender") or None
+                content = msg.get("content") or msg.get("text") or msg.get("message") or None
+                
+                if role and content:
+                    conversation_history.append({"role": role, "content": content})
+                
+                # Handle {user: "...", bot: "..."} format (each key = separate message)
+                if "user" in msg and msg["user"]:
+                    conversation_history.append({"role": "user", "content": msg["user"]})
+                if "bot" in msg and msg["bot"]:
+                    conversation_history.append({"role": "assistant", "content": msg["bot"]})
+            
+            else:
+                # Pydantic model or other object
+                conversation_history.append({"role": getattr(msg, 'role', 'user'), "content": getattr(msg, 'content', str(msg))})
         
-        # Process the chat
+        logger.info(f"  Normalized conversation_history: {len(conversation_history)} messages")
+        
+        # Medical information is now a raw dict, pass directly
+        medical_info = request.medical_information
+        
+        # Prescription data is now a raw dict, pass directly
+        prescription_data = request.prescription_data
+        
+        # Process the chat with audio support
         result = medical_chat_service.chat(
             user_message=request.message,
+            audio_base64=request.audio_base64,
             conversation_history=conversation_history,
             medical_information=medical_info,
-            prescription_data=prescription_data
+            prescription_data=prescription_data,
+            return_audio=True  # Always generate audio response
         )
         
-        # Convert updated medical information back to model
-        updated_medical_info = None
-        if result.get("updated_medical_information"):
-            updated_medical_info = MedicalInformation(**result["updated_medical_information"])
+        # Get updated medical information (already a dict)
+        updated_medical_info = result.get("updated_medical_information")
         
         logger.info(f"Chat response generated. Complete: {result.get('conversation_complete', False)}")
         
         return MedicalChatResponse(
             success=True,
             response=result.get("response"),
+            audio_response_base64=result.get("audio_response_base64"),
             updated_medical_information=updated_medical_info,
             conversation_complete=result.get("conversation_complete", False),
             error=None
@@ -298,8 +386,10 @@ async def medical_chat(request: MedicalChatRequest):
         return MedicalChatResponse(
             success=False,
             response=None,
+            audio_response_base64=None,
             updated_medical_information=None,
             conversation_complete=False,
             error=f"Error in medical chat: {str(e)}"
         )
+
 
